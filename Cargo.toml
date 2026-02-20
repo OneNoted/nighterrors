@@ -1,0 +1,19 @@
+[package]
+name = "nighterrors"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+libc = "0.2"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+
+[build-dependencies]
+wayland-scanner = "0.31"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
