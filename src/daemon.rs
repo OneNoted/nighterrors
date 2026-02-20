@@ -285,20 +285,29 @@ impl Dispatch<zwlr_gamma_control_v1::ZwlrGammaControlV1, u32> for WaylandState {
         event: zwlr_gamma_control_v1::Event,
         global_id: &u32,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
-        let Some(control) = state.wlr_controls.get_mut(global_id) else {
-            return;
-        };
-
         match event {
             zwlr_gamma_control_v1::Event::GammaSize { size } => {
-                control.gamma_size = Some(size);
-                control.failed = false;
-                state.pending_reapply = true;
+                if let Some(control) = state.wlr_controls.get_mut(global_id) {
+                    control.gamma_size = Some(size);
+                    control.failed = false;
+                    state.pending_reapply = true;
+                }
             }
             zwlr_gamma_control_v1::Event::Failed => {
-                control.failed = true;
+                if let Some(old) = state.wlr_controls.remove(global_id) {
+                    wlr_gamma::destroy_control(&old);
+                }
+
+                if let (Some(manager), Some(output)) =
+                    (state.wlr_manager.clone(), state.outputs.get(global_id))
+                {
+                    let recreated =
+                        wlr_gamma::create_control(&manager, &output.wl_output, qh, *global_id);
+                    state.wlr_controls.insert(*global_id, recreated);
+                }
+
                 state.pending_reapply = true;
             }
         }
@@ -362,13 +371,37 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
     let mut should_stop = false;
 
     while !should_stop {
+        event_queue
+            .dispatch_pending(&mut wl_state)
+            .map_err(|e| format!("wayland dispatch failed: {e}"))?;
+
+        if wl_state.pending_reapply {
+            if let Err(err) = apply_filter(&mut wl_state, &filter_state, backend) {
+                vlog(wl_state.verbose, &format!("apply failed: {err}"));
+            }
+            wl_state.pending_reapply = false;
+        }
+
         loop {
             match request_rx.try_recv() {
                 Ok(msg) => {
-                    let (response, stop) =
+                    let request_result =
                         handle_request(&msg.line, &mut filter_state, &mut wl_state, backend);
+                    let mut response = request_result.response;
+
+                    if request_result.needs_apply {
+                        event_queue
+                            .dispatch_pending(&mut wl_state)
+                            .map_err(|e| format!("wayland dispatch failed: {e}"))?;
+
+                        match apply_filter(&mut wl_state, &filter_state, backend) {
+                            Ok(()) => {}
+                            Err(err) => response = format!("error: apply failed: {err}"),
+                        }
+                    }
+
                     let _ = msg.reply_tx.send(response);
-                    if stop {
+                    if request_result.should_stop {
                         should_stop = true;
                     }
                 }
@@ -383,17 +416,6 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
         if should_stop {
             break;
         }
-
-        if wl_state.pending_reapply {
-            if let Err(err) = apply_filter(&mut wl_state, &filter_state, backend) {
-                vlog(wl_state.verbose, &format!("apply failed: {err}"));
-            }
-            wl_state.pending_reapply = false;
-        }
-
-        event_queue
-            .dispatch_pending(&mut wl_state)
-            .map_err(|e| format!("wayland dispatch failed: {e}"))?;
 
         if wl_state.pending_reapply {
             continue;
@@ -477,6 +499,7 @@ fn apply_filter(
         }
         BackendKind::WlrGamma => {
             let output_ids: Vec<u32> = wl_state.outputs.keys().copied().collect();
+            let mut errors = Vec::new();
 
             for global_id in output_ids {
                 let Some(output) = wl_state.outputs.get(&global_id) else {
@@ -487,6 +510,9 @@ fn apply_filter(
                 };
 
                 if control.failed {
+                    continue;
+                }
+                if control.gamma_size.is_none() {
                     continue;
                 }
 
@@ -500,12 +526,25 @@ fn apply_filter(
                     )
                 };
 
-                wlr_gamma::apply_control(control, multipliers)?;
+                if let Err(err) = wlr_gamma::apply_control(control, multipliers) {
+                    let output_id = output.primary_id();
+                    errors.push(format!("{output_id}: {err}"));
+                }
             }
 
-            Ok(())
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
         }
     }
+}
+
+struct RequestResult {
+    response: String,
+    should_stop: bool,
+    needs_apply: bool,
 }
 
 fn handle_request(
@@ -513,10 +552,16 @@ fn handle_request(
     filter: &mut FilterState,
     wl_state: &mut WaylandState,
     backend: BackendKind,
-) -> (String, bool) {
+) -> RequestResult {
     let parsed = match ControlRequest::from_wire(line) {
         Ok(req) => req,
-        Err(err) => return (format!("error: {err}"), false),
+        Err(err) => {
+            return RequestResult {
+                response: format!("error: {err}"),
+                should_stop: false,
+                needs_apply: false,
+            };
+        }
     };
 
     match parsed {
@@ -525,19 +570,33 @@ fn handle_request(
                 Ok(new_temp) => {
                     filter.temperature_k = new_temp;
                     filter.identity = false;
-                    wl_state.pending_reapply = true;
-                    ("ok".to_string(), false)
+                    RequestResult {
+                        response: "ok".to_string(),
+                        should_stop: false,
+                        needs_apply: true,
+                    }
                 }
-                Err(err) => (format!("error: {err}"), false),
+                Err(err) => RequestResult {
+                    response: format!("error: {err}"),
+                    should_stop: false,
+                    needs_apply: false,
+                },
             }
         }
         ControlRequest::SetGamma(change) => match resolve_gamma(filter.gamma_pct, change) {
             Ok(new_gamma) => {
                 filter.gamma_pct = new_gamma;
-                wl_state.pending_reapply = true;
-                ("ok".to_string(), false)
+                RequestResult {
+                    response: "ok".to_string(),
+                    should_stop: false,
+                    needs_apply: true,
+                }
             }
-            Err(err) => (format!("error: {err}"), false),
+            Err(err) => RequestResult {
+                response: format!("error: {err}"),
+                should_stop: false,
+                needs_apply: false,
+            },
         },
         ControlRequest::SetIdentity(value) => {
             match value {
@@ -545,8 +604,11 @@ fn handle_request(
                 IdentityValue::False => filter.identity = false,
                 IdentityValue::Toggle => filter.identity = !filter.identity,
             }
-            wl_state.pending_reapply = true;
-            ("ok".to_string(), false)
+            RequestResult {
+                response: "ok".to_string(),
+                should_stop: false,
+                needs_apply: true,
+            }
         }
         ControlRequest::Get(field) => {
             let response = match field {
@@ -563,12 +625,19 @@ fn handle_request(
                     join_csv(filter.excluded_ids.iter().cloned().collect()),
                 ),
             };
-            (response, false)
+            RequestResult {
+                response,
+                should_stop: false,
+                needs_apply: false,
+            }
         }
         ControlRequest::Reset => {
             filter.reset_to_defaults();
-            wl_state.pending_reapply = true;
-            ("ok".to_string(), false)
+            RequestResult {
+                response: "ok".to_string(),
+                should_stop: false,
+                needs_apply: true,
+            }
         }
         ControlRequest::OutputsList => {
             let mut ids: Vec<String> = wl_state
@@ -584,23 +653,41 @@ fn handle_request(
                 })
                 .collect();
             ids.sort();
-            (format!("ok outputs={}", join_csv(ids)), false)
+            RequestResult {
+                response: format!("ok outputs={}", join_csv(ids)),
+                should_stop: false,
+                needs_apply: false,
+            }
         }
         ControlRequest::ExcludeAdd(id) => {
             filter.excluded_ids.insert(id);
-            wl_state.pending_reapply = true;
-            ("ok".to_string(), false)
+            RequestResult {
+                response: "ok".to_string(),
+                should_stop: false,
+                needs_apply: true,
+            }
         }
         ControlRequest::ExcludeRemove(id) => {
             filter.excluded_ids.remove(&id);
-            wl_state.pending_reapply = true;
-            ("ok".to_string(), false)
+            RequestResult {
+                response: "ok".to_string(),
+                should_stop: false,
+                needs_apply: true,
+            }
         }
         ControlRequest::ExcludeList => {
             let values: Vec<String> = filter.excluded_ids.iter().cloned().collect();
-            (format!("ok excludes={}", join_csv(values)), false)
+            RequestResult {
+                response: format!("ok excludes={}", join_csv(values)),
+                should_stop: false,
+                needs_apply: false,
+            }
         }
-        ControlRequest::Stop => ("ok".to_string(), true),
+        ControlRequest::Stop => RequestResult {
+            response: "ok".to_string(),
+            should_stop: true,
+            needs_apply: false,
+        },
     }
 }
 
@@ -696,5 +783,50 @@ mod tests {
     fn float_formatting_trims_trailing_zeros() {
         assert_eq!(format_float(100.0), "100");
         assert_eq!(format_float(95.5), "95.5");
+    }
+
+    #[test]
+    fn set_request_requires_apply() {
+        let mut filter = FilterState {
+            temperature_k: 6000,
+            gamma_pct: 100.0,
+            identity: false,
+            excluded_ids: BTreeSet::new(),
+        };
+        let mut wl_state = WaylandState::new(false);
+
+        let result = handle_request(
+            "set temperature 5500",
+            &mut filter,
+            &mut wl_state,
+            BackendKind::WlrGamma,
+        );
+
+        assert_eq!(result.response, "ok");
+        assert!(result.needs_apply);
+        assert!(!result.should_stop);
+        assert_eq!(filter.temperature_k, 5500);
+    }
+
+    #[test]
+    fn get_request_does_not_require_apply() {
+        let mut filter = FilterState {
+            temperature_k: 6000,
+            gamma_pct: 100.0,
+            identity: false,
+            excluded_ids: BTreeSet::new(),
+        };
+        let mut wl_state = WaylandState::new(false);
+
+        let result = handle_request(
+            "get temperature",
+            &mut filter,
+            &mut wl_state,
+            BackendKind::HyprlandCtm,
+        );
+
+        assert_eq!(result.response, "ok temperature=6000");
+        assert!(!result.needs_apply);
+        assert!(!result.should_stop);
     }
 }

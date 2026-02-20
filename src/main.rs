@@ -9,7 +9,11 @@ use cli::{Command, ControlRequest};
 
 fn main() {
     if let Err(err) = real_main() {
-        eprintln!("error: {err}");
+        if err.starts_with("error:") {
+            eprintln!("{err}");
+        } else {
+            eprintln!("error: {err}");
+        }
         std::process::exit(1);
     }
 }
