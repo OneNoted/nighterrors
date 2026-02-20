@@ -4,7 +4,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{wl_output, wl_registry};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
@@ -19,6 +19,8 @@ use crate::color;
 use crate::ipc::{self, IpcRequest};
 use crate::protocols::hyprland_ctm::hyprland_ctm_control_manager_v1;
 use crate::protocols::wlr_gamma::{zwlr_gamma_control_manager_v1, zwlr_gamma_control_v1};
+
+const WLR_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -102,6 +104,7 @@ struct WaylandState {
     hyprland_blocked: bool,
     wlr_manager: Option<zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1>,
     wlr_controls: BTreeMap<u32, WlrControlState>,
+    wlr_retry_after: BTreeMap<u32, Instant>,
     selected_backend: Option<BackendKind>,
     pending_reapply: bool,
 }
@@ -115,6 +118,7 @@ impl WaylandState {
             hyprland_blocked: false,
             wlr_manager: None,
             wlr_controls: BTreeMap::new(),
+            wlr_retry_after: BTreeMap::new(),
             selected_backend: None,
             pending_reapply: false,
         }
@@ -128,18 +132,29 @@ impl WaylandState {
         let Some(manager) = self.wlr_manager.clone() else {
             return;
         };
+        let now = Instant::now();
 
         let missing: Vec<u32> = self
             .outputs
             .keys()
             .copied()
-            .filter(|global_id| !self.wlr_controls.contains_key(global_id))
+            .filter(|global_id| {
+                if self.wlr_controls.contains_key(global_id) {
+                    return false;
+                }
+                !self
+                    .wlr_retry_after
+                    .get(global_id)
+                    .map(|until| *until > now)
+                    .unwrap_or(false)
+            })
             .collect();
 
         for global_id in missing {
             if let Some(output) = self.outputs.get(&global_id) {
                 let control = wlr_gamma::create_control(&manager, &output.wl_output, qh, global_id);
                 self.wlr_controls.insert(global_id, control);
+                self.wlr_retry_after.remove(&global_id);
             }
         }
     }
@@ -215,6 +230,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WaylandState {
                 if let Some(control) = state.wlr_controls.remove(&name) {
                     wlr_gamma::destroy_control(&control);
                 }
+                state.wlr_retry_after.remove(&name);
             }
             _ => {}
         }
@@ -285,13 +301,14 @@ impl Dispatch<zwlr_gamma_control_v1::ZwlrGammaControlV1, u32> for WaylandState {
         event: zwlr_gamma_control_v1::Event,
         global_id: &u32,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         match event {
             zwlr_gamma_control_v1::Event::GammaSize { size } => {
                 if let Some(control) = state.wlr_controls.get_mut(global_id) {
                     control.gamma_size = Some(size);
                     control.failed = false;
+                    state.wlr_retry_after.remove(global_id);
                     state.pending_reapply = true;
                 }
             }
@@ -300,13 +317,9 @@ impl Dispatch<zwlr_gamma_control_v1::ZwlrGammaControlV1, u32> for WaylandState {
                     wlr_gamma::destroy_control(&old);
                 }
 
-                if let (Some(manager), Some(output)) =
-                    (state.wlr_manager.clone(), state.outputs.get(global_id))
-                {
-                    let recreated =
-                        wlr_gamma::create_control(&manager, &output.wl_output, qh, *global_id);
-                    state.wlr_controls.insert(*global_id, recreated);
-                }
+                state
+                    .wlr_retry_after
+                    .insert(*global_id, Instant::now() + WLR_RETRY_DELAY);
 
                 state.pending_reapply = true;
             }
@@ -374,6 +387,7 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
         event_queue
             .dispatch_pending(&mut wl_state)
             .map_err(|e| format!("wayland dispatch failed: {e}"))?;
+        wl_state.ensure_wlr_controls(&qh);
 
         if wl_state.pending_reapply {
             if let Err(err) = apply_filter(&mut wl_state, &filter_state, backend) {
@@ -394,6 +408,7 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
                         event_queue
                             .dispatch_pending(&mut wl_state)
                             .map_err(|e| format!("wayland dispatch failed: {e}"))?;
+                        wl_state.ensure_wlr_controls(&qh);
 
                         match apply_filter(&mut wl_state, &filter_state, backend) {
                             Ok(()) => {}
@@ -840,5 +855,22 @@ mod tests {
         assert_eq!(result.response, "ok temperature=6000");
         assert!(!result.needs_apply);
         assert!(!result.should_stop);
+    }
+
+    #[test]
+    fn stop_request_flags_shutdown_without_apply() {
+        let mut filter = FilterState {
+            temperature_k: 6000,
+            gamma_pct: 100.0,
+            identity: false,
+            excluded_ids: BTreeSet::new(),
+        };
+        let mut wl_state = WaylandState::new(false);
+
+        let result = handle_request("stop", &mut filter, &mut wl_state, BackendKind::WlrGamma);
+
+        assert_eq!(result.response, "ok");
+        assert!(result.should_stop);
+        assert!(!result.needs_apply);
     }
 }
