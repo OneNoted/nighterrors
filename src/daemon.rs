@@ -385,6 +385,7 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
         loop {
             match request_rx.try_recv() {
                 Ok(msg) => {
+                    let previous_filter_state = filter_state.clone();
                     let request_result =
                         handle_request(&msg.line, &mut filter_state, &mut wl_state, backend);
                     let mut response = request_result.response;
@@ -396,7 +397,18 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
 
                         match apply_filter(&mut wl_state, &filter_state, backend) {
                             Ok(()) => {}
-                            Err(err) => response = format!("error: apply failed: {err}"),
+                            Err(err) => {
+                                filter_state = previous_filter_state;
+                                if let Err(restore_err) =
+                                    apply_filter(&mut wl_state, &filter_state, backend)
+                                {
+                                    vlog(
+                                        wl_state.verbose,
+                                        &format!("failed to restore previous filter state: {restore_err}"),
+                                    );
+                                }
+                                response = format!("error: apply failed: {err}");
+                            }
                         }
                     }
 
