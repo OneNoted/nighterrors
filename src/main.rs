@@ -3,6 +3,7 @@ mod cli;
 mod color;
 mod daemon;
 mod ipc;
+mod output;
 mod protocols;
 
 use cli::{Command, ControlRequest};
@@ -37,11 +38,28 @@ fn real_main() -> Result<(), String> {
 
 fn run_control_command(
     socket_override: Option<std::path::PathBuf>,
-    _output_mode: cli::OutputMode,
+    output_mode: cli::OutputMode,
     request: ControlRequest,
 ) -> Result<(), String> {
     let socket_path = socket_override.unwrap_or_else(ipc::default_socket_path);
-    let response = ipc::send_request(&socket_path, &request.to_wire())?;
-    println!("{response}");
+    let response = ipc::send_request(&socket_path, &request.to_wire())
+        .map_err(|err| add_connect_hint(err, &socket_path))?;
+    let rendered = output::render_response(&request, &response, output_mode, stdout_is_tty());
+    println!("{rendered}");
     Ok(())
+}
+
+fn stdout_is_tty() -> bool {
+    unsafe { libc::isatty(libc::STDOUT_FILENO) == 1 }
+}
+
+fn add_connect_hint(err: String, socket_path: &std::path::Path) -> String {
+    if err.starts_with("failed to connect to") {
+        format!(
+            "{err}\nhint: start daemon with: nighterrors run (socket: {})",
+            socket_path.display()
+        )
+    } else {
+        err
+    }
 }
