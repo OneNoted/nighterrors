@@ -5,7 +5,6 @@
   <img alt="Platform Linux" src="https://img.shields.io/badge/platform-linux-informational?logo=linux" />
   <img alt="Display Wayland" src="https://img.shields.io/badge/display-wayland-6f42c1" />
   <img alt="Backends Hyprland + wlroots" src="https://img.shields.io/badge/backends-hyprland%20%2B%20wlroots-2ea44f" />
-  <img alt="Dependencies minimal" src="https://img.shields.io/badge/dependencies-minimal-blue" />
 </p>
 
 Ultra-light Rust Wayland blue-light filter daemon.
