@@ -102,9 +102,9 @@ pub struct Cli {
     pub command: Command,
 }
 
-const USAGE_GENERAL: &str = "nighterrors v1.1\n\nCommands:\n  nighterrors run [--temperature <K>] [--gamma <PCT>] [--identity] [--exclude <OUTPUT_ID>]... [--socket <PATH>] [--verbose]\n  nighterrors set temperature <VALUE|+DELTA|-DELTA> [--socket <PATH>]\n  nighterrors set gamma <VALUE|+DELTA|-DELTA> [--socket <PATH>]\n  nighterrors set identity <true|false|toggle> [--socket <PATH>]\n  nighterrors get <temperature|gamma|identity|backend|state> [--socket <PATH>]\n  nighterrors status [--socket <PATH>]\n  nighterrors reset [--socket <PATH>]\n  nighterrors outputs list [--socket <PATH>]\n  nighterrors exclude add <OUTPUT_ID> [--socket <PATH>]\n  nighterrors exclude remove <OUTPUT_ID> [--socket <PATH>]\n  nighterrors exclude list [--socket <PATH>]\n  nighterrors stop [--socket <PATH>]\n\nControl output modes:\n  --raw      force raw daemon output (ok/error line)\n  --pretty   force human-readable output\n\nUse `nighterrors help <command>` for command-specific help.";
+const USAGE_GENERAL: &str = "nighterrors v1.2\n\nUsage:\n  nighterrors <command> [options]\n\nCommon Commands:\n  nighterrors run [options]\n  nighterrors set <target> <value> [--socket <PATH>]\n  nighterrors get <field> [--socket <PATH>]\n  nighterrors status [--socket <PATH>] (alias for get state)\n  nighterrors outputs <list|ls> [--socket <PATH>]\n  nighterrors exclude <add|remove|list> ... [--socket <PATH>]\n  nighterrors reset [--socket <PATH>]\n  nighterrors stop [--socket <PATH>]\n\nAliases:\n  run flags: --temp|-t, --g|-g, --id|-i, --ex|-x\n  set targets: temperature|temp|t, gamma|g, identity|id\n  get fields: temperature|temp|t, gamma|g, identity|id, backend|be, state|status\n\nExamples:\n  nighterrors run -t 5500 -g 95 -i off\n  nighterrors set temp +200\n  nighterrors status --raw\n\nControl output modes:\n  --raw      force raw daemon output (ok/error line)\n  --pretty   force human-readable output\n\nMore help:\n  nighterrors help <run|set|get|status|outputs|exclude|reset|stop>";
 
-const USAGE_RUN: &str = "Usage: nighterrors run [options]\n\nOptions:\n  --temperature <K>      Startup temperature in Kelvin (1000..=20000, default 6000)\n  --gamma <PCT>          Startup gamma percent (0..=200, default 100)\n  --identity             Start in identity mode (disable tint, keep gamma)\n  --exclude <OUTPUT_ID>  Exclude an output from filtering (repeatable)\n  --socket <PATH>        Override control socket path\n  --verbose              Enable daemon log messages\n  -h, --help             Show this help";
+const USAGE_RUN: &str = "Usage: nighterrors run [options]\n\nOptions:\n  --temperature|--temp|-t <K>      Startup temperature in Kelvin (1000..=20000, default 6000)\n  --gamma|--g|-g <PCT>             Startup gamma percent (0..=200, default 100)\n  --identity|--id|-i [<BOOL>]      Enable identity or set explicitly\n                                    BOOL: true|false|on|off|1|0|yes|no\n  --identity=<BOOL>                Inline value form (also --id=, -i=)\n  --exclude|--ex|-x <OUTPUT_ID>    Exclude an output from filtering (repeatable)\n  --socket <PATH>                  Override control socket path\n  --verbose                        Enable daemon log messages\n  -h, --help                       Show this help\n\nExamples:\n  nighterrors run -t 5500 -g 95 -i off\n  nighterrors run --temp 4800 --id on --exclude eDP-1\n  nighterrors run --identity\n  nighterrors run --identity=false";
 
 const USAGE_SET: &str = "Usage: nighterrors set <target> <value> [--socket <PATH>] [--raw|--pretty]\n\nTargets:\n  temperature|temp|t     <VALUE|+DELTA|-DELTA> in Kelvin\n  gamma|g                <VALUE|+DELTA|-DELTA> in percent\n  identity|id            <true|false|toggle> (aliases: on/off/1/0/yes/no)\n\nExamples:\n  nighterrors set temp 5500\n  nighterrors set g -5\n  nighterrors set id toggle";
 
@@ -272,6 +272,15 @@ fn parse_help(args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String>
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunFlagKind {
+    Temperature,
+    Gamma,
+    Identity,
+    Exclude,
+    Verbose,
+}
+
 fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
     if is_help_only(&args) {
         return Ok(Cli {
@@ -287,44 +296,76 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
     let mut i = 0;
 
     while i < args.len() {
-        match args[i].as_str() {
-            "--temperature" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--temperature requires a value".to_string())?;
+        let token = args[i].as_str();
+        let (flag, inline_value) = split_inline_flag_value(token);
+        let Some(kind) = normalize_run_flag(flag) else {
+            let known_flags = [
+                "--temperature",
+                "--temp",
+                "-t",
+                "--gamma",
+                "--g",
+                "-g",
+                "--identity",
+                "--id",
+                "-i",
+                "--exclude",
+                "--ex",
+                "-x",
+                "--verbose",
+            ];
+            return Err(format!(
+                "unknown run flag: {token}{}",
+                suggestion_suffix(flag, &known_flags)
+            ));
+        };
+
+        match kind {
+            RunFlagKind::Temperature => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
                 let parsed = value
                     .parse::<u32>()
                     .map_err(|_| format!("invalid temperature: {value}"))?;
                 options.temperature_k = parsed;
-                i += 2;
+                i += consumed;
             }
-            "--gamma" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--gamma requires a value".to_string())?;
+            RunFlagKind::Gamma => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
                 let parsed = value
                     .parse::<f64>()
                     .map_err(|_| format!("invalid gamma: {value}"))?;
                 options.gamma_pct = parsed;
-                i += 2;
+                i += consumed;
             }
-            "--identity" => {
+            RunFlagKind::Identity => {
+                if let Some(value) = inline_value {
+                    options.identity = parse_run_identity_bool(value)?;
+                    i += 1;
+                    continue;
+                }
+
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        options.identity = parse_run_identity_bool(next)?;
+                        i += 2;
+                        continue;
+                    }
+                }
+
                 options.identity = true;
                 i += 1;
             }
-            "--exclude" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--exclude requires an output id".to_string())?;
-                options.excludes.push(value.clone());
-                i += 2;
+            RunFlagKind::Exclude => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
+                options.excludes.push(value.to_string());
+                i += consumed;
             }
-            "--verbose" => {
+            RunFlagKind::Verbose => {
+                if inline_value.is_some() {
+                    return Err("run verbose flag does not take a value".to_string());
+                }
                 options.verbose = true;
                 i += 1;
-            }
-            unknown => {
-                return Err(format!("unknown run flag: {unknown}"));
             }
         }
     }
@@ -334,6 +375,44 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
         output_mode,
         command: Command::Run(options),
     })
+}
+
+fn normalize_run_flag(value: &str) -> Option<RunFlagKind> {
+    match value {
+        "--temperature" | "--temp" | "-t" => Some(RunFlagKind::Temperature),
+        "--gamma" | "--g" | "-g" => Some(RunFlagKind::Gamma),
+        "--identity" | "--id" | "-i" => Some(RunFlagKind::Identity),
+        "--exclude" | "--ex" | "-x" => Some(RunFlagKind::Exclude),
+        "--verbose" => Some(RunFlagKind::Verbose),
+        _ => None,
+    }
+}
+
+fn split_inline_flag_value(token: &str) -> (&str, Option<&str>) {
+    if let Some((flag, value)) = token.split_once('=') {
+        (flag, Some(value))
+    } else {
+        (token, None)
+    }
+}
+
+fn take_run_flag_value<'a>(
+    flag: &str,
+    inline_value: Option<&'a str>,
+    args: &'a [String],
+    index: usize,
+) -> Result<(&'a str, usize), String> {
+    if let Some(value) = inline_value {
+        if value.is_empty() {
+            return Err(format!("{flag} requires a value"));
+        }
+        return Ok((value, 1));
+    }
+
+    let value = args
+        .get(index + 1)
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    Ok((value.as_str(), 2))
 }
 
 fn parse_set(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
@@ -630,6 +709,21 @@ fn parse_identity_value(value: &str) -> Result<IdentityValue, String> {
     }
 }
 
+fn parse_run_identity_bool(value: &str) -> Result<bool, String> {
+    let parsed = parse_identity_value(value).map_err(|_| {
+        "run identity value must be one of: true, false (aliases: on/off/1/0/yes/no)".to_string()
+    })?;
+
+    match parsed {
+        IdentityValue::True => Ok(true),
+        IdentityValue::False => Ok(false),
+        IdentityValue::Toggle => Err(
+            "run identity value must be one of: true, false (aliases: on/off/1/0/yes/no)"
+                .to_string(),
+        ),
+    }
+}
+
 fn is_help_only(args: &[String]) -> bool {
     args.len() == 1 && (args[0] == "--help" || args[0] == "-h")
 }
@@ -828,6 +922,89 @@ mod tests {
     }
 
     #[test]
+    fn parse_run_alias_flags_and_inline_values() {
+        let cli = parse_args([
+            "nighterrors",
+            "run",
+            "--temp=5500",
+            "--g",
+            "95",
+            "-x",
+            "eDP-1",
+            "--ex=HDMI-A-1",
+            "--verbose",
+        ])
+        .expect("parse should succeed");
+
+        match cli.command {
+            Command::Run(opts) => {
+                assert_eq!(opts.temperature_k, 5500);
+                assert!((opts.gamma_pct - 95.0).abs() < f64::EPSILON);
+                assert_eq!(
+                    opts.excludes,
+                    vec!["eDP-1".to_string(), "HDMI-A-1".to_string()]
+                );
+                assert!(opts.verbose);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_identity_forms() {
+        let cli = parse_args(["nighterrors", "run", "--identity"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli = parse_args(["nighterrors", "run", "--id", "on"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli = parse_args(["nighterrors", "run", "-i", "off"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(!opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli =
+            parse_args(["nighterrors", "run", "--identity=false"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(!opts.identity),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_identity_invalid_value_fails() {
+        let err = parse_args(["nighterrors", "run", "--id", "maybe"]).expect_err("must fail");
+        assert!(err.contains("run identity value must be one of"));
+    }
+
+    #[test]
+    fn parse_run_unknown_flag_suggests_nearest() {
+        let err = parse_args(["nighterrors", "run", "--temprature", "5500"]).expect_err("must fail");
+        assert!(err.contains("unknown run flag"));
+        assert!(err.contains("did you mean"));
+    }
+
+    #[test]
+    fn help_text_includes_new_sections_and_examples() {
+        let general = usage_for(HelpTopic::General);
+        assert!(general.contains("Common Commands"));
+        assert!(general.contains("Aliases"));
+        assert!(general.contains("Examples"));
+
+        let run = usage_for(HelpTopic::Run);
+        assert!(run.contains("--temperature|--temp|-t"));
+        assert!(run.contains("BOOL: true|false|on|off|1|0|yes|no"));
+        assert!(run.contains("nighterrors run -t 5500 -g 95 -i off"));
+    }
+
+    #[test]
     fn parse_set_temperature_alias() {
         let cli = parse_args(["nighterrors", "set", "temp", "+250"]).expect("parse should succeed");
         match cli.command {
@@ -922,6 +1099,9 @@ mod tests {
     fn parse_help_topic_and_command_help() {
         let cli = parse_args(["nighterrors", "help", "set"]).expect("parse");
         assert_eq!(cli.command, Command::Help(HelpTopic::Set));
+
+        let cli = parse_args(["nighterrors", "run", "--help"]).expect("parse");
+        assert_eq!(cli.command, Command::Help(HelpTopic::Run));
 
         let cli = parse_args(["nighterrors", "set", "--help"]).expect("parse");
         assert_eq!(cli.command, Command::Help(HelpTopic::Set));
