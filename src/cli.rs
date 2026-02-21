@@ -272,6 +272,15 @@ fn parse_help(args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String>
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunFlagKind {
+    Temperature,
+    Gamma,
+    Identity,
+    Exclude,
+    Verbose,
+}
+
 fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
     if is_help_only(&args) {
         return Ok(Cli {
@@ -287,44 +296,67 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
     let mut i = 0;
 
     while i < args.len() {
-        match args[i].as_str() {
-            "--temperature" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--temperature requires a value".to_string())?;
+        let token = args[i].as_str();
+        let (flag, inline_value) = split_inline_flag_value(token);
+        let Some(kind) = normalize_run_flag(flag) else {
+            let known_flags = [
+                "--temperature",
+                "--temp",
+                "-t",
+                "--gamma",
+                "--g",
+                "-g",
+                "--identity",
+                "--id",
+                "-i",
+                "--exclude",
+                "--ex",
+                "-x",
+                "--verbose",
+            ];
+            return Err(format!(
+                "unknown run flag: {token}{}",
+                suggestion_suffix(flag, &known_flags)
+            ));
+        };
+
+        match kind {
+            RunFlagKind::Temperature => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
                 let parsed = value
                     .parse::<u32>()
                     .map_err(|_| format!("invalid temperature: {value}"))?;
                 options.temperature_k = parsed;
-                i += 2;
+                i += consumed;
             }
-            "--gamma" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--gamma requires a value".to_string())?;
+            RunFlagKind::Gamma => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
                 let parsed = value
                     .parse::<f64>()
                     .map_err(|_| format!("invalid gamma: {value}"))?;
                 options.gamma_pct = parsed;
-                i += 2;
+                i += consumed;
             }
-            "--identity" => {
+            RunFlagKind::Identity => {
+                if inline_value.is_some() {
+                    return Err(
+                        "run identity flag does not take a value in this form".to_string(),
+                    );
+                }
                 options.identity = true;
                 i += 1;
             }
-            "--exclude" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| "--exclude requires an output id".to_string())?;
-                options.excludes.push(value.clone());
-                i += 2;
+            RunFlagKind::Exclude => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
+                options.excludes.push(value.to_string());
+                i += consumed;
             }
-            "--verbose" => {
+            RunFlagKind::Verbose => {
+                if inline_value.is_some() {
+                    return Err("run verbose flag does not take a value".to_string());
+                }
                 options.verbose = true;
                 i += 1;
-            }
-            unknown => {
-                return Err(format!("unknown run flag: {unknown}"));
             }
         }
     }
@@ -334,6 +366,44 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
         output_mode,
         command: Command::Run(options),
     })
+}
+
+fn normalize_run_flag(value: &str) -> Option<RunFlagKind> {
+    match value {
+        "--temperature" | "--temp" | "-t" => Some(RunFlagKind::Temperature),
+        "--gamma" | "--g" | "-g" => Some(RunFlagKind::Gamma),
+        "--identity" | "--id" | "-i" => Some(RunFlagKind::Identity),
+        "--exclude" | "--ex" | "-x" => Some(RunFlagKind::Exclude),
+        "--verbose" => Some(RunFlagKind::Verbose),
+        _ => None,
+    }
+}
+
+fn split_inline_flag_value(token: &str) -> (&str, Option<&str>) {
+    if let Some((flag, value)) = token.split_once('=') {
+        (flag, Some(value))
+    } else {
+        (token, None)
+    }
+}
+
+fn take_run_flag_value<'a>(
+    flag: &str,
+    inline_value: Option<&'a str>,
+    args: &'a [String],
+    index: usize,
+) -> Result<(&'a str, usize), String> {
+    if let Some(value) = inline_value {
+        if value.is_empty() {
+            return Err(format!("{flag} requires a value"));
+        }
+        return Ok((value, 1));
+    }
+
+    let value = args
+        .get(index + 1)
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    Ok((value.as_str(), 2))
 }
 
 fn parse_set(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
