@@ -4,7 +4,7 @@ use std::path::PathBuf;
 pub const DEFAULT_TEMPERATURE_K: u32 = 6000;
 pub const DEFAULT_GAMMA_PCT: f64 = 100.0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunOptions {
     pub temperature_k: u32,
     pub gamma_pct: f64,
@@ -80,7 +80,7 @@ pub enum HelpTopic {
     Status,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Run(RunOptions),
     Control(ControlRequest),
