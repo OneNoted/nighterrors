@@ -338,11 +338,20 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
                 i += consumed;
             }
             RunFlagKind::Identity => {
-                if inline_value.is_some() {
-                    return Err(
-                        "run identity flag does not take a value in this form".to_string(),
-                    );
+                if let Some(value) = inline_value {
+                    options.identity = parse_run_identity_bool(value)?;
+                    i += 1;
+                    continue;
                 }
+
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        options.identity = parse_run_identity_bool(next)?;
+                        i += 2;
+                        continue;
+                    }
+                }
+
                 options.identity = true;
                 i += 1;
             }
@@ -697,6 +706,21 @@ fn parse_identity_value(value: &str) -> Result<IdentityValue, String> {
         "false" | "off" | "0" | "no" => Ok(IdentityValue::False),
         "toggle" => Ok(IdentityValue::Toggle),
         _ => Err("identity value must be one of: true, false, toggle (aliases: on/off/1/0/yes/no)".to_string()),
+    }
+}
+
+fn parse_run_identity_bool(value: &str) -> Result<bool, String> {
+    let parsed = parse_identity_value(value).map_err(|_| {
+        "run identity value must be one of: true, false (aliases: on/off/1/0/yes/no)".to_string()
+    })?;
+
+    match parsed {
+        IdentityValue::True => Ok(true),
+        IdentityValue::False => Ok(false),
+        IdentityValue::Toggle => Err(
+            "run identity value must be one of: true, false (aliases: on/off/1/0/yes/no)"
+                .to_string(),
+        ),
     }
 }
 
