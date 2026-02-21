@@ -922,6 +922,89 @@ mod tests {
     }
 
     #[test]
+    fn parse_run_alias_flags_and_inline_values() {
+        let cli = parse_args([
+            "nighterrors",
+            "run",
+            "--temp=5500",
+            "--g",
+            "95",
+            "-x",
+            "eDP-1",
+            "--ex=HDMI-A-1",
+            "--verbose",
+        ])
+        .expect("parse should succeed");
+
+        match cli.command {
+            Command::Run(opts) => {
+                assert_eq!(opts.temperature_k, 5500);
+                assert!((opts.gamma_pct - 95.0).abs() < f64::EPSILON);
+                assert_eq!(
+                    opts.excludes,
+                    vec!["eDP-1".to_string(), "HDMI-A-1".to_string()]
+                );
+                assert!(opts.verbose);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_identity_forms() {
+        let cli = parse_args(["nighterrors", "run", "--identity"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli = parse_args(["nighterrors", "run", "--id", "on"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli = parse_args(["nighterrors", "run", "-i", "off"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(!opts.identity),
+            _ => panic!("expected run command"),
+        }
+
+        let cli =
+            parse_args(["nighterrors", "run", "--identity=false"]).expect("parse should succeed");
+        match cli.command {
+            Command::Run(opts) => assert!(!opts.identity),
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parse_run_identity_invalid_value_fails() {
+        let err = parse_args(["nighterrors", "run", "--id", "maybe"]).expect_err("must fail");
+        assert!(err.contains("run identity value must be one of"));
+    }
+
+    #[test]
+    fn parse_run_unknown_flag_suggests_nearest() {
+        let err = parse_args(["nighterrors", "run", "--temprature", "5500"]).expect_err("must fail");
+        assert!(err.contains("unknown run flag"));
+        assert!(err.contains("did you mean"));
+    }
+
+    #[test]
+    fn help_text_includes_new_sections_and_examples() {
+        let general = usage_for(HelpTopic::General);
+        assert!(general.contains("Common Commands"));
+        assert!(general.contains("Aliases"));
+        assert!(general.contains("Examples"));
+
+        let run = usage_for(HelpTopic::Run);
+        assert!(run.contains("--temperature|--temp|-t"));
+        assert!(run.contains("BOOL: true|false|on|off|1|0|yes|no"));
+        assert!(run.contains("nighterrors run -t 5500 -g 95 -i off"));
+    }
+
+    #[test]
     fn parse_set_temperature_alias() {
         let cli = parse_args(["nighterrors", "set", "temp", "+250"]).expect("parse should succeed");
         match cli.command {
