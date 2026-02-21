@@ -22,8 +22,8 @@ fn real_main() -> Result<(), String> {
     let parsed = cli::parse_args(std::env::args_os())?;
 
     match parsed.command {
-        Command::Help => {
-            println!("{}", cli::usage());
+        Command::Help(topic) => {
+            println!("{}", cli::usage_for(topic));
             Ok(())
         }
         Command::Version => {
@@ -31,12 +31,13 @@ fn real_main() -> Result<(), String> {
             Ok(())
         }
         Command::Run(options) => daemon::run(options, parsed.socket),
-        Command::Control(request) => run_control_command(parsed.socket, request),
+        Command::Control(request) => run_control_command(parsed.socket, parsed.output_mode, request),
     }
 }
 
 fn run_control_command(
     socket_override: Option<std::path::PathBuf>,
+    _output_mode: cli::OutputMode,
     request: ControlRequest,
 ) -> Result<(), String> {
     let socket_path = socket_override.unwrap_or_else(ipc::default_socket_path);
