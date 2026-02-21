@@ -1100,6 +1100,9 @@ mod tests {
         let cli = parse_args(["nighterrors", "help", "set"]).expect("parse");
         assert_eq!(cli.command, Command::Help(HelpTopic::Set));
 
+        let cli = parse_args(["nighterrors", "run", "--help"]).expect("parse");
+        assert_eq!(cli.command, Command::Help(HelpTopic::Run));
+
         let cli = parse_args(["nighterrors", "set", "--help"]).expect("parse");
         assert_eq!(cli.command, Command::Help(HelpTopic::Set));
 
