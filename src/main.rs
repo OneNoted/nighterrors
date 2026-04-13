@@ -5,6 +5,7 @@ mod daemon;
 mod ipc;
 mod output;
 mod protocols;
+mod service;
 
 use cli::{Command, ControlRequest};
 
@@ -32,7 +33,10 @@ fn real_main() -> Result<(), String> {
             Ok(())
         }
         Command::Run(options) => daemon::run(options, parsed.socket),
-        Command::Control(request) => run_control_command(parsed.socket, parsed.output_mode, request),
+        Command::Control(request) => {
+            run_control_command(parsed.socket, parsed.output_mode, request)
+        }
+        Command::Service(command) => service::run(command),
     }
 }
 

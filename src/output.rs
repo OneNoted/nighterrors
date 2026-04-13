@@ -43,10 +43,10 @@ pub fn render_response(
         return format_excludes(value);
     }
 
-    if let Some(value) = raw_response.strip_prefix("ok state=") {
-        if let Some(pretty) = format_state(value) {
-            return pretty;
-        }
+    if let Some(value) = raw_response.strip_prefix("ok state=")
+        && let Some(pretty) = format_state(value)
+    {
+        return pretty;
     }
 
     raw_response.to_string()
@@ -147,13 +147,23 @@ mod tests {
 
     #[test]
     fn auto_mode_uses_raw_when_not_tty() {
-        let rendered = render_response(&get_state_req(), "ok temperature=6000", OutputMode::Auto, false);
+        let rendered = render_response(
+            &get_state_req(),
+            "ok temperature=6000",
+            OutputMode::Auto,
+            false,
+        );
         assert_eq!(rendered, "ok temperature=6000");
     }
 
     #[test]
     fn auto_mode_uses_pretty_when_tty() {
-        let rendered = render_response(&get_state_req(), "ok temperature=6000", OutputMode::Auto, true);
+        let rendered = render_response(
+            &get_state_req(),
+            "ok temperature=6000",
+            OutputMode::Auto,
+            true,
+        );
         assert_eq!(rendered, "Temperature: 6000 K");
     }
 
@@ -168,13 +178,23 @@ mod tests {
 
     #[test]
     fn unknown_ok_shape_falls_back_to_raw() {
-        let rendered = render_response(&get_state_req(), "ok mystery=value", OutputMode::Pretty, true);
+        let rendered = render_response(
+            &get_state_req(),
+            "ok mystery=value",
+            OutputMode::Pretty,
+            true,
+        );
         assert_eq!(rendered, "ok mystery=value");
     }
 
     #[test]
     fn formats_outputs_and_excludes() {
-        let rendered = render_response(&get_state_req(), "ok outputs=eDP-1*,HDMI-A-1", OutputMode::Pretty, true);
+        let rendered = render_response(
+            &get_state_req(),
+            "ok outputs=eDP-1*,HDMI-A-1",
+            OutputMode::Pretty,
+            true,
+        );
         assert_eq!(rendered, "Outputs:\n- eDP-1 (excluded)\n- HDMI-A-1");
 
         let rendered = render_response(&get_state_req(), "ok excludes=-", OutputMode::Pretty, true);

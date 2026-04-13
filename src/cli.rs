@@ -78,12 +78,31 @@ pub enum HelpTopic {
     Exclude,
     Stop,
     Status,
+    Toggle,
+    Service,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServiceInstallOptions {
+    pub socket: Option<PathBuf>,
+    pub run_options: RunOptions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServiceCommand {
+    Install(ServiceInstallOptions),
+    Uninstall,
+    Status,
+    Start,
+    Stop,
+    Restart,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Run(RunOptions),
     Control(ControlRequest),
+    Service(ServiceCommand),
     Help(HelpTopic),
     Version,
 }
@@ -102,7 +121,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-const USAGE_GENERAL: &str = "nighterrors v1.2\n\nUsage:\n  nighterrors <command> [options]\n\nCommon Commands:\n  nighterrors run [options]\n  nighterrors set <target> <value> [--socket <PATH>]\n  nighterrors get <field> [--socket <PATH>]\n  nighterrors status [--socket <PATH>] (alias for get state)\n  nighterrors outputs <list|ls> [--socket <PATH>]\n  nighterrors exclude <add|remove|list> ... [--socket <PATH>]\n  nighterrors reset [--socket <PATH>]\n  nighterrors stop [--socket <PATH>]\n\nAliases:\n  run flags: --temp|-t, --g|-g, --id|-i, --ex|-x\n  set targets: temperature|temp|t, gamma|g, identity|id\n  get fields: temperature|temp|t, gamma|g, identity|id, backend|be, state|status\n\nExamples:\n  nighterrors run -t 5500 -g 95 -i off\n  nighterrors set temp +200\n  nighterrors status --raw\n\nControl output modes:\n  --raw      force raw daemon output (ok/error line)\n  --pretty   force human-readable output\n\nMore help:\n  nighterrors help <run|set|get|status|outputs|exclude|reset|stop>";
+const USAGE_GENERAL_BODY: &str = "Usage:\n  nighterrors <command> [options]\n\nCommon Commands:\n  nighterrors run [options]\n  nighterrors set <target> <value> [--socket <PATH>]\n  nighterrors toggle [--socket <PATH>]\n  nighterrors get <field> [--socket <PATH>]\n  nighterrors status [--socket <PATH>] (alias for get state)\n  nighterrors outputs <list|ls> [--socket <PATH>]\n  nighterrors exclude <add|remove|list> ... [--socket <PATH>]\n  nighterrors reset [--socket <PATH>]\n  nighterrors stop [--socket <PATH>]\n  nighterrors service <install|uninstall|status|start|stop|restart> [options]\n\nAliases:\n  run flags: --temp|-t, --g|-g, --id|-i, --ex|-x\n  set targets: temperature|temp|t, gamma|g, identity|id\n  get fields: temperature|temp|t, gamma|g, identity|id, backend|be, state|status\n\nExamples:\n  nighterrors run -t 5500 -g 95 -i off\n  nighterrors toggle --raw\n  nighterrors set temp +200\n  nighterrors service install --temp 5500 --gamma 95\n\nControl output modes:\n  --raw      force raw daemon output (ok/error line)\n  --pretty   force human-readable output\n\nMore help:\n  nighterrors help <run|set|toggle|get|status|outputs|exclude|reset|stop|service>";
 
 const USAGE_RUN: &str = "Usage: nighterrors run [options]\n\nOptions:\n  --temperature|--temp|-t <K>      Startup temperature in Kelvin (1000..=20000, default 6000)\n  --gamma|--g|-g <PCT>             Startup gamma percent (0..=200, default 100)\n  --identity|--id|-i [<BOOL>]      Enable identity or set explicitly\n                                    BOOL: true|false|on|off|1|0|yes|no\n  --identity=<BOOL>                Inline value form (also --id=, -i=)\n  --exclude|--ex|-x <OUTPUT_ID>    Exclude an output from filtering (repeatable)\n  --socket <PATH>                  Override control socket path\n  --verbose                        Enable daemon log messages\n  -h, --help                       Show this help\n\nExamples:\n  nighterrors run -t 5500 -g 95 -i off\n  nighterrors run --temp 4800 --id on --exclude eDP-1\n  nighterrors run --identity\n  nighterrors run --identity=false";
 
@@ -110,8 +129,7 @@ const USAGE_SET: &str = "Usage: nighterrors set <target> <value> [--socket <PATH
 
 const USAGE_GET: &str = "Usage: nighterrors get <field> [--socket <PATH>] [--raw|--pretty]\n\nFields:\n  temperature|temp|t\n  gamma|g\n  identity|id\n  backend|be\n  state|status\n\nExamples:\n  nighterrors get state\n  nighterrors get be --raw";
 
-const USAGE_RESET: &str =
-    "Usage: nighterrors reset [--socket <PATH>] [--raw|--pretty]\n\nReset filter state to defaults.";
+const USAGE_RESET: &str = "Usage: nighterrors reset [--socket <PATH>] [--raw|--pretty]\n\nReset filter state to defaults.";
 
 const USAGE_OUTPUTS: &str = "Usage: nighterrors outputs <list|ls> [--socket <PATH>] [--raw|--pretty]\n\nList detected outputs (`*` means excluded).";
 
@@ -120,24 +138,33 @@ const USAGE_EXCLUDE: &str = "Usage: nighterrors exclude <action> [args] [--socke
 const USAGE_STOP: &str =
     "Usage: nighterrors stop [--socket <PATH>] [--raw|--pretty]\n\nStop the running daemon.";
 
-const USAGE_STATUS: &str =
-    "Usage: nighterrors status [--socket <PATH>] [--raw|--pretty]\n\nAlias for `nighterrors get state`.";
+const USAGE_STATUS: &str = "Usage: nighterrors status [--socket <PATH>] [--raw|--pretty]\n\nAlias for `nighterrors get state`.";
 
-pub fn usage() -> &'static str {
-    USAGE_GENERAL
+const USAGE_TOGGLE: &str = "Usage: nighterrors toggle [--socket <PATH>] [--raw|--pretty]\n\nToggle visible effect on/off while keeping the daemon running.\n\nExamples:\n  nighterrors toggle\n  nighterrors toggle --raw\n  # compositor keybinds can call this command directly";
+
+const USAGE_SERVICE: &str = "Usage:\n  nighterrors service install [run options]\n  nighterrors service uninstall\n  nighterrors service status\n  nighterrors service start\n  nighterrors service stop\n  nighterrors service restart\n\nInstall options:\n  --temperature|--temp|-t <K>      Startup temperature in Kelvin (1000..=20000, default 6000)\n  --gamma|--g|-g <PCT>             Startup gamma percent (0..=200, default 100)\n  --identity|--id|-i [<BOOL>]      Startup identity mode (default off)\n  --exclude|--ex|-x <OUTPUT_ID>    Exclude an output (repeatable)\n  --socket <PATH>                  Startup control socket path\n  --verbose                        Enable daemon logs\n\nExamples:\n  nighterrors service install\n  nighterrors service install --temp 5500 --gamma 95\n  nighterrors service status";
+
+pub fn usage() -> String {
+    format!(
+        "nighterrors {}\n\n{}",
+        env!("CARGO_PKG_VERSION"),
+        USAGE_GENERAL_BODY
+    )
 }
 
-pub fn usage_for(topic: HelpTopic) -> &'static str {
+pub fn usage_for(topic: HelpTopic) -> String {
     match topic {
-        HelpTopic::General => USAGE_GENERAL,
-        HelpTopic::Run => USAGE_RUN,
-        HelpTopic::Set => USAGE_SET,
-        HelpTopic::Get => USAGE_GET,
-        HelpTopic::Reset => USAGE_RESET,
-        HelpTopic::Outputs => USAGE_OUTPUTS,
-        HelpTopic::Exclude => USAGE_EXCLUDE,
-        HelpTopic::Stop => USAGE_STOP,
-        HelpTopic::Status => USAGE_STATUS,
+        HelpTopic::General => usage(),
+        HelpTopic::Run => USAGE_RUN.to_string(),
+        HelpTopic::Set => USAGE_SET.to_string(),
+        HelpTopic::Get => USAGE_GET.to_string(),
+        HelpTopic::Reset => USAGE_RESET.to_string(),
+        HelpTopic::Outputs => USAGE_OUTPUTS.to_string(),
+        HelpTopic::Exclude => USAGE_EXCLUDE.to_string(),
+        HelpTopic::Stop => USAGE_STOP.to_string(),
+        HelpTopic::Status => USAGE_STATUS.to_string(),
+        HelpTopic::Toggle => USAGE_TOGGLE.to_string(),
+        HelpTopic::Service => USAGE_SERVICE.to_string(),
     }
 }
 
@@ -175,12 +202,14 @@ where
     match command.as_str() {
         "run" => parse_run(args, output_mode),
         "set" => parse_set(args, output_mode),
+        "toggle" => parse_toggle(args, output_mode),
         "get" => parse_get(args, output_mode),
         "status" => parse_status(args, output_mode),
         "reset" => parse_reset(args, output_mode),
         "outputs" => parse_outputs(args, output_mode),
         "exclude" => parse_exclude(args, output_mode),
         "stop" => parse_stop(args, output_mode),
+        "service" => parse_service(args, output_mode),
         "help" => parse_help(args, output_mode),
         "--help" | "-h" => Ok(Cli {
             socket: None,
@@ -194,8 +223,8 @@ where
         }),
         _ => {
             let commands = [
-                "run", "set", "get", "status", "reset", "outputs", "exclude", "stop", "help",
-                "version",
+                "run", "set", "toggle", "get", "status", "reset", "outputs", "exclude", "stop",
+                "service", "help", "version",
             ];
             Err(format!(
                 "unknown command: {command}{}\n\n{}",
@@ -281,7 +310,7 @@ enum RunFlagKind {
     Verbose,
 }
 
-fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
+fn parse_run(args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
     if is_help_only(&args) {
         return Ok(Cli {
             socket: None,
@@ -290,90 +319,126 @@ fn parse_run(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
         });
     }
 
-    let socket = extract_socket_arg(&mut args)?;
-
-    let mut options = RunOptions::default();
-    let mut i = 0;
-
-    while i < args.len() {
-        let token = args[i].as_str();
-        let (flag, inline_value) = split_inline_flag_value(token);
-        let Some(kind) = normalize_run_flag(flag) else {
-            let known_flags = [
-                "--temperature",
-                "--temp",
-                "-t",
-                "--gamma",
-                "--g",
-                "-g",
-                "--identity",
-                "--id",
-                "-i",
-                "--exclude",
-                "--ex",
-                "-x",
-                "--verbose",
-            ];
-            return Err(format!(
-                "unknown run flag: {token}{}",
-                suggestion_suffix(flag, &known_flags)
-            ));
-        };
-
-        match kind {
-            RunFlagKind::Temperature => {
-                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
-                let parsed = value
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid temperature: {value}"))?;
-                options.temperature_k = parsed;
-                i += consumed;
-            }
-            RunFlagKind::Gamma => {
-                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
-                let parsed = value
-                    .parse::<f64>()
-                    .map_err(|_| format!("invalid gamma: {value}"))?;
-                options.gamma_pct = parsed;
-                i += consumed;
-            }
-            RunFlagKind::Identity => {
-                if let Some(value) = inline_value {
-                    options.identity = parse_run_identity_bool(value)?;
-                    i += 1;
-                    continue;
-                }
-
-                if let Some(next) = args.get(i + 1) {
-                    if !next.starts_with('-') {
-                        options.identity = parse_run_identity_bool(next)?;
-                        i += 2;
-                        continue;
-                    }
-                }
-
-                options.identity = true;
-                i += 1;
-            }
-            RunFlagKind::Exclude => {
-                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
-                options.excludes.push(value.to_string());
-                i += consumed;
-            }
-            RunFlagKind::Verbose => {
-                if inline_value.is_some() {
-                    return Err("run verbose flag does not take a value".to_string());
-                }
-                options.verbose = true;
-                i += 1;
-            }
-        }
-    }
+    let (options, socket) = parse_run_options(args, "run")?;
 
     Ok(Cli {
         socket,
         output_mode,
         command: Command::Run(options),
+    })
+}
+
+fn parse_toggle(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
+    if is_help_only(&args) {
+        return Ok(Cli {
+            socket: None,
+            output_mode,
+            command: Command::Help(HelpTopic::Toggle),
+        });
+    }
+
+    let socket = extract_socket_arg(&mut args)?;
+    if !args.is_empty() {
+        return Err(format!(
+            "unexpected arguments for toggle: {}\n\n{}",
+            args.join(" "),
+            usage_for(HelpTopic::Toggle)
+        ));
+    }
+
+    Ok(Cli {
+        socket,
+        output_mode,
+        command: Command::Control(ControlRequest::SetIdentity(IdentityValue::Toggle)),
+    })
+}
+
+fn parse_service(args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
+    if args.is_empty() || is_help_only(&args) {
+        return Ok(Cli {
+            socket: None,
+            output_mode,
+            command: Command::Help(HelpTopic::Service),
+        });
+    }
+
+    let mut args = args;
+    let action = args.remove(0);
+
+    let service_command = match action.as_str() {
+        "install" => {
+            if is_help_only(&args) {
+                return Ok(Cli {
+                    socket: None,
+                    output_mode,
+                    command: Command::Help(HelpTopic::Service),
+                });
+            }
+            let (run_options, socket) = parse_run_options(args, "service install")?;
+            ServiceCommand::Install(ServiceInstallOptions {
+                socket,
+                run_options,
+            })
+        }
+        "uninstall" => {
+            if !args.is_empty() {
+                return Err(format!(
+                    "service uninstall takes no additional arguments\n\n{}",
+                    usage_for(HelpTopic::Service)
+                ));
+            }
+            ServiceCommand::Uninstall
+        }
+        "status" => {
+            if !args.is_empty() {
+                return Err(format!(
+                    "service status takes no additional arguments\n\n{}",
+                    usage_for(HelpTopic::Service)
+                ));
+            }
+            ServiceCommand::Status
+        }
+        "start" => {
+            if !args.is_empty() {
+                return Err(format!(
+                    "service start takes no additional arguments\n\n{}",
+                    usage_for(HelpTopic::Service)
+                ));
+            }
+            ServiceCommand::Start
+        }
+        "stop" => {
+            if !args.is_empty() {
+                return Err(format!(
+                    "service stop takes no additional arguments\n\n{}",
+                    usage_for(HelpTopic::Service)
+                ));
+            }
+            ServiceCommand::Stop
+        }
+        "restart" => {
+            if !args.is_empty() {
+                return Err(format!(
+                    "service restart takes no additional arguments\n\n{}",
+                    usage_for(HelpTopic::Service)
+                ));
+            }
+            ServiceCommand::Restart
+        }
+        _ => {
+            let actions = ["install", "uninstall", "status", "start", "stop", "restart"];
+            return Err(format!(
+                "unknown service action: {action}{}\n\n{}",
+                suggestion_suffix(&action, &actions),
+                usage_for(HelpTopic::Service)
+            ));
+        }
+    };
+
+    Ok(Cli {
+        socket: None,
+        output_mode,
+        command: Command::Service(service_command),
     })
 }
 
@@ -415,6 +480,93 @@ fn take_run_flag_value<'a>(
     Ok((value.as_str(), 2))
 }
 
+fn parse_run_options(
+    mut args: Vec<String>,
+    context: &str,
+) -> Result<(RunOptions, Option<PathBuf>), String> {
+    let socket = extract_socket_arg(&mut args)?;
+
+    let mut options = RunOptions::default();
+    let mut i = 0;
+
+    while i < args.len() {
+        let token = args[i].as_str();
+        let (flag, inline_value) = split_inline_flag_value(token);
+        let Some(kind) = normalize_run_flag(flag) else {
+            let known_flags = [
+                "--temperature",
+                "--temp",
+                "-t",
+                "--gamma",
+                "--g",
+                "-g",
+                "--identity",
+                "--id",
+                "-i",
+                "--exclude",
+                "--ex",
+                "-x",
+                "--verbose",
+            ];
+            return Err(format!(
+                "unknown {context} flag: {token}{}",
+                suggestion_suffix(flag, &known_flags)
+            ));
+        };
+
+        match kind {
+            RunFlagKind::Temperature => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
+                let parsed = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid temperature: {value}"))?;
+                options.temperature_k = parsed;
+                i += consumed;
+            }
+            RunFlagKind::Gamma => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
+                let parsed = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid gamma: {value}"))?;
+                options.gamma_pct = parsed;
+                i += consumed;
+            }
+            RunFlagKind::Identity => {
+                if let Some(value) = inline_value {
+                    options.identity = parse_run_identity_bool(value)?;
+                    i += 1;
+                    continue;
+                }
+
+                if let Some(next) = args.get(i + 1)
+                    && !next.starts_with('-')
+                {
+                    options.identity = parse_run_identity_bool(next)?;
+                    i += 2;
+                    continue;
+                }
+
+                options.identity = true;
+                i += 1;
+            }
+            RunFlagKind::Exclude => {
+                let (value, consumed) = take_run_flag_value(flag, inline_value, &args, i)?;
+                options.excludes.push(value.to_string());
+                i += consumed;
+            }
+            RunFlagKind::Verbose => {
+                if inline_value.is_some() {
+                    return Err(format!("{context} verbose flag does not take a value"));
+                }
+                options.verbose = true;
+                i += 1;
+            }
+        }
+    }
+
+    Ok((options, socket))
+}
+
 fn parse_set(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, String> {
     if is_help_only(&args) {
         return Ok(Cli {
@@ -427,7 +579,10 @@ fn parse_set(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
     let socket = extract_socket_arg(&mut args)?;
 
     if args.len() < 2 {
-        return Err(format!("set command requires a target and value\n\n{}", usage_for(HelpTopic::Set)));
+        return Err(format!(
+            "set command requires a target and value\n\n{}",
+            usage_for(HelpTopic::Set)
+        ));
     }
 
     let target = args.remove(0);
@@ -469,7 +624,10 @@ fn parse_get(mut args: Vec<String>, output_mode: OutputMode) -> Result<Cli, Stri
     let socket = extract_socket_arg(&mut args)?;
 
     if args.len() != 1 {
-        return Err(format!("get command requires exactly one field\n\n{}", usage_for(HelpTopic::Get)));
+        return Err(format!(
+            "get command requires exactly one field\n\n{}",
+            usage_for(HelpTopic::Get)
+        ));
     }
 
     let field = match normalize_get_field(&args[0]) {
@@ -662,15 +820,18 @@ fn parse_help_topic(value: &str) -> Result<HelpTopic, String> {
         "help" | "general" => Ok(HelpTopic::General),
         "run" => Ok(HelpTopic::Run),
         "set" => Ok(HelpTopic::Set),
+        "toggle" => Ok(HelpTopic::Toggle),
         "get" => Ok(HelpTopic::Get),
         "status" => Ok(HelpTopic::Status),
         "reset" => Ok(HelpTopic::Reset),
         "outputs" => Ok(HelpTopic::Outputs),
         "exclude" => Ok(HelpTopic::Exclude),
         "stop" => Ok(HelpTopic::Stop),
+        "service" => Ok(HelpTopic::Service),
         _ => {
             let topics = [
-                "general", "run", "set", "get", "status", "reset", "outputs", "exclude", "stop",
+                "general", "run", "set", "toggle", "get", "status", "reset", "outputs", "exclude",
+                "stop", "service",
             ];
             Err(format!(
                 "unknown help topic: {value}{}",
@@ -705,7 +866,10 @@ fn parse_identity_value(value: &str) -> Result<IdentityValue, String> {
         "true" | "on" | "1" | "yes" => Ok(IdentityValue::True),
         "false" | "off" | "0" | "no" => Ok(IdentityValue::False),
         "toggle" => Ok(IdentityValue::Toggle),
-        _ => Err("identity value must be one of: true, false, toggle (aliases: on/off/1/0/yes/no)".to_string()),
+        _ => Err(
+            "identity value must be one of: true, false, toggle (aliases: on/off/1/0/yes/no)"
+                .to_string(),
+        ),
     }
 }
 
@@ -866,7 +1030,11 @@ fn suggest<'a>(value: &str, candidates: &'a [&'a str]) -> Option<&'a str> {
     }
 
     let threshold = if value.len() <= 4 { 1 } else { 2 };
-    if best_distance <= threshold { best } else { None }
+    if best_distance <= threshold {
+        best
+    } else {
+        None
+    }
 }
 
 fn edit_distance(a: &str, b: &str) -> usize {
@@ -986,7 +1154,8 @@ mod tests {
 
     #[test]
     fn parse_run_unknown_flag_suggests_nearest() {
-        let err = parse_args(["nighterrors", "run", "--temprature", "5500"]).expect_err("must fail");
+        let err =
+            parse_args(["nighterrors", "run", "--temprature", "5500"]).expect_err("must fail");
         assert!(err.contains("unknown run flag"));
         assert!(err.contains("did you mean"));
     }
@@ -994,14 +1163,23 @@ mod tests {
     #[test]
     fn help_text_includes_new_sections_and_examples() {
         let general = usage_for(HelpTopic::General);
+        assert!(general.contains(env!("CARGO_PKG_VERSION")));
         assert!(general.contains("Common Commands"));
         assert!(general.contains("Aliases"));
         assert!(general.contains("Examples"));
+        assert!(general.contains("nighterrors toggle"));
+        assert!(general.contains("nighterrors service"));
 
         let run = usage_for(HelpTopic::Run);
         assert!(run.contains("--temperature|--temp|-t"));
         assert!(run.contains("BOOL: true|false|on|off|1|0|yes|no"));
         assert!(run.contains("nighterrors run -t 5500 -g 95 -i off"));
+
+        let toggle = usage_for(HelpTopic::Toggle);
+        assert!(toggle.contains("Usage: nighterrors toggle"));
+
+        let service = usage_for(HelpTopic::Service);
+        assert!(service.contains("service install"));
     }
 
     #[test]
@@ -1090,8 +1268,68 @@ mod tests {
     }
 
     #[test]
+    fn parse_toggle_maps_to_identity_toggle() {
+        let cli = parse_args(["nighterrors", "toggle"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Control(ControlRequest::SetIdentity(IdentityValue::Toggle))
+        );
+    }
+
+    #[test]
+    fn parse_service_install_with_run_flags() {
+        let cli = parse_args([
+            "nighterrors",
+            "service",
+            "install",
+            "--temp",
+            "5500",
+            "--gamma",
+            "95.5",
+            "--identity=on",
+            "--exclude",
+            "eDP-1",
+            "--socket",
+            "/tmp/ne.sock",
+            "--verbose",
+        ])
+        .expect("parse");
+
+        match cli.command {
+            Command::Service(ServiceCommand::Install(options)) => {
+                assert_eq!(options.socket, Some(PathBuf::from("/tmp/ne.sock")));
+                assert_eq!(options.run_options.temperature_k, 5500);
+                assert!((options.run_options.gamma_pct - 95.5).abs() < f64::EPSILON);
+                assert!(options.run_options.identity);
+                assert_eq!(options.run_options.excludes, vec!["eDP-1".to_string()]);
+                assert!(options.run_options.verbose);
+            }
+            _ => panic!("expected service install"),
+        }
+    }
+
+    #[test]
+    fn parse_service_lifecycle_commands() {
+        let cli = parse_args(["nighterrors", "service", "status"]).expect("parse");
+        assert_eq!(cli.command, Command::Service(ServiceCommand::Status));
+
+        let cli = parse_args(["nighterrors", "service", "start"]).expect("parse");
+        assert_eq!(cli.command, Command::Service(ServiceCommand::Start));
+
+        let cli = parse_args(["nighterrors", "service", "stop"]).expect("parse");
+        assert_eq!(cli.command, Command::Service(ServiceCommand::Stop));
+
+        let cli = parse_args(["nighterrors", "service", "restart"]).expect("parse");
+        assert_eq!(cli.command, Command::Service(ServiceCommand::Restart));
+
+        let cli = parse_args(["nighterrors", "service", "uninstall"]).expect("parse");
+        assert_eq!(cli.command, Command::Service(ServiceCommand::Uninstall));
+    }
+
+    #[test]
     fn parse_output_mode_conflict_fails() {
-        let err = parse_args(["nighterrors", "--raw", "get", "state", "--pretty"]).expect_err("must fail");
+        let err = parse_args(["nighterrors", "--raw", "get", "state", "--pretty"])
+            .expect_err("must fail");
         assert!(err.contains("cannot be used together"));
     }
 
@@ -1108,6 +1346,15 @@ mod tests {
 
         let cli = parse_args(["nighterrors", "status", "--help"]).expect("parse");
         assert_eq!(cli.command, Command::Help(HelpTopic::Status));
+
+        let cli = parse_args(["nighterrors", "help", "toggle"]).expect("parse");
+        assert_eq!(cli.command, Command::Help(HelpTopic::Toggle));
+
+        let cli = parse_args(["nighterrors", "help", "service"]).expect("parse");
+        assert_eq!(cli.command, Command::Help(HelpTopic::Service));
+
+        let cli = parse_args(["nighterrors", "service", "--help"]).expect("parse");
+        assert_eq!(cli.command, Command::Help(HelpTopic::Service));
     }
 
     #[test]
@@ -1123,6 +1370,13 @@ mod tests {
         let err = parse_args(["nighterrors", "statsu"]).expect_err("must fail");
         assert!(err.contains("unknown command"));
         assert!(err.contains("did you mean"));
+    }
+
+    #[test]
+    fn parse_service_unknown_action_fails_with_usage() {
+        let err = parse_args(["nighterrors", "service", "enable"]).expect_err("must fail");
+        assert!(err.contains("unknown service action"));
+        assert!(err.contains("Usage:"));
     }
 
     #[test]

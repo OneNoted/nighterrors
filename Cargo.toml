@@ -1,8 +1,17 @@
 [package]
 name = "nighterrors"
 version = "0.1.0"
-edition = "2021"
+description = "Ultra-light Rust Wayland blue-light filter daemon for Hyprland/Niri and wlroots compositors"
+edition = "2024"
+rust-version = "1.93"
+license = "Apache-2.0"
 build = "build.rs"
+readme = "README.md"
+repository = "https://github.com/OneNoted/nighterrors"
+homepage = "https://github.com/OneNoted/nighterrors"
+documentation = "https://docs.rs/nighterrors"
+keywords = ["wayland", "hyprland", "wlroots", "gamma", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 libc = "0.2"

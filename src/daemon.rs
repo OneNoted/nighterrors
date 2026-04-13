@@ -12,8 +12,8 @@ use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use crate::backends::hyprland_ctm;
 use crate::backends::wlr_gamma::{self, WlrControlState};
 use crate::cli::{
-    ControlRequest, GammaChange, GetField, IdentityValue, RunOptions, TemperatureChange,
-    DEFAULT_GAMMA_PCT, DEFAULT_TEMPERATURE_K,
+    ControlRequest, DEFAULT_GAMMA_PCT, DEFAULT_TEMPERATURE_K, GammaChange, GetField, IdentityValue,
+    RunOptions, TemperatureChange,
 };
 use crate::color;
 use crate::ipc::{self, IpcRequest};
@@ -419,7 +419,9 @@ pub fn run(options: RunOptions, socket_override: Option<PathBuf>) -> Result<(), 
                                 {
                                     vlog(
                                         wl_state.verbose,
-                                        &format!("failed to restore previous filter state: {restore_err}"),
+                                        &format!(
+                                            "failed to restore previous filter state: {restore_err}"
+                                        ),
                                     );
                                 }
                                 response = format!("error: apply failed: {err}");
