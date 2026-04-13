@@ -11,7 +11,7 @@ provides=("nighterrors=${pkgver}")
 conflicts=('nighterrors' 'nighterrors-git')
 _asset_name="${_pkgname}-${pkgver}-x86_64-unknown-linux-gnu"
 source=("${_asset_name}.tar.xz::${url}/releases/download/v${pkgver}/${_asset_name}.tar.xz")
-sha256sums=('f2c7cfced12947f8025b3d779a62494636bef082b24cfeced1d69aea1cfc94e9')
+sha256sums=('57469a790ab2026252a993ef2e4bf1b5e7436090706d092093388b3dcc3d702e')
 
 package() {
   install -Dm755 \

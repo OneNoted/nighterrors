@@ -1,0 +1,9 @@
+# pack-refs with: peeled fully-peeled sorted 
+5364c99c380b5852cc63cae39a7bd78d30bc0948 refs/heads/dev/nighterrors
+01a2a7c0f89da233e30252640cd7b0b2f13b1f60 refs/heads/main
+65b4fe0eca3b1d68399228a97c8b33523d9fc5b8 refs/pull/1/head
+2fe0cb03939f74532cee6043cc0f759e7fdc063d refs/pull/2/head
+3ee1895f427466ff420290947381bd629f8275e7 refs/pull/3/head
+5364c99c380b5852cc63cae39a7bd78d30bc0948 refs/pull/4/head
+8d9b39767b336189fa0dddbbbeb77b73288b13a0 refs/tags/v0.1.0
+^01a2a7c0f89da233e30252640cd7b0b2f13b1f60
