@@ -1,10 +1,29 @@
-# nighterrors
+<h1 align="center">nighterrors</h1>
 
-<p align="left">
-  <img alt="Rust 2024" src="https://img.shields.io/badge/rust-2024-orange?logo=rust" />
-  <img alt="Platform Linux" src="https://img.shields.io/badge/platform-linux-informational?logo=linux" />
-  <img alt="Display Wayland" src="https://img.shields.io/badge/display-wayland-6f42c1" />
-  <img alt="Backends Hyprland + wlroots" src="https://img.shields.io/badge/backends-hyprland%20%2B%20wlroots-2ea44f" />
+<p align="center">
+  Ultra-light Wayland blue-light filter daemon for Hyprland, Niri, and wlroots compositors.<br />
+  Foreground daemon or user <code>systemd</code> service, with runtime temperature and gamma control from a single binary.
+</p>
+
+<p align="center">
+  <img alt="crates.io" src="https://img.shields.io/crates/v/nighterrors?style=flat-square" />
+  <img alt="AUR nighterrors-bin" src="https://img.shields.io/aur/version/nighterrors-bin?style=flat-square" />
+  <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache%202.0-000000?style=flat-square" />
+  <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-000000?style=flat-square&logo=rust" />
+  <img alt="Platform Linux" src="https://img.shields.io/badge/platform-linux-1f2937?style=flat-square&logo=linux" />
+  <img alt="Display Wayland" src="https://img.shields.io/badge/display-wayland-6f42c1?style=flat-square" />
+</p>
+
+<p align="center">
+  <a href="#install"><strong>Install</strong></a>
+  ·
+  <a href="#quick-start"><strong>Quick start</strong></a>
+  ·
+  <a href="#help"><strong>Help</strong></a>
+  ·
+  <a href="https://crates.io/crates/nighterrors"><strong>crates.io</strong></a>
+  ·
+  <a href="https://aur.archlinux.org/packages/nighterrors-bin"><strong>AUR</strong></a>
 </p>
 
 Ultra-light Rust Wayland blue-light filter daemon for Hyprland, Niri, and wlroots compositors.
